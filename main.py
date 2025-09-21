@@ -62,6 +62,7 @@ def main():
 
     latest = df.iloc[-1]
     previous = df.iloc[-2]  # to detect crossovers
+    print(f"Latest Close: {latest['close']:.2f}, VWAP: {latest['vwap']:.2f}, 9EMA: {latest['ema9']:.2f}")
 
     signals = []
 
