@@ -9,7 +9,7 @@ from datetime import datetime
 load_dotenv()
 API_KEY = os.getenv("ALPHAVANTAGE_KEY")
 TICKER = "SPY"
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1419406129707880589/XVsd-_5T96QVtzmm5uJo0K4v_FXf3nONPvZGqwk5u3iim04gert-tgxQkyJTaCBrv6v7"
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 
 # === Fetch intraday data ===
 def fetch_intraday():
@@ -62,17 +62,23 @@ def main():
 
     latest = df.iloc[-1]
     previous = df.iloc[-2]  # to detect crossovers
+
+    # Debug print to see values every run
     print(f"Latest Close: {latest['close']:.2f}, VWAP: {latest['vwap']:.2f}, 9EMA: {latest['ema9']:.2f}")
 
     signals = []
 
-    # Check VWAP cross
+    # Long / upward signals
     if previous["close"] < previous["vwap"] and latest["close"] > latest["vwap"]:
         signals.append("Price **reclaimed VWAP**")
-
-    # Check EMA cross
     if previous["close"] < previous["ema9"] and latest["close"] > latest["ema9"]:
         signals.append("Price **crossed above 9EMA**")
+
+    # Short / downward signals
+    if previous["close"] > previous["vwap"] and latest["close"] < latest["vwap"]:
+        signals.append("Price **dropped below VWAP** (Short)")
+    if previous["close"] > previous["ema9"] and latest["close"] < latest["ema9"]:
+        signals.append("Price **crossed below 9EMA** (Short)")
 
     if signals:
         message = (
@@ -89,3 +95,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
