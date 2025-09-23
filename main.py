@@ -17,10 +17,11 @@ def fetch_latest_price(symbol):
     url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={API_KEY}"
     response = requests.get(url)
     data = response.json()
-    if "Global Quote" not in data:
-        print("No price data returned from Alpha Vantage.")
+    try:
+        return float(data["Global Quote"]["05. price"])
+    except (KeyError, TypeError, ValueError):
+        print("No live price returned from Alpha Vantage.")
         return None
-    return float(data["Global Quote"]["05. price"])
 
 def fetch_intraday_data(symbol):
     """Fetch intraday OHLCV data (5-min candles)."""
@@ -50,7 +51,12 @@ def send_discord_alert(message):
         print(f"Error sending Discord alert: {e}")
 
 def main():
-    print("Fetching latest price and intraday data...")
+    # Restrict to 9:30–11:30 AM ET
+    est = pytz.timezone("US/Eastern")
+    now = datetime.now(est)
+    if not (now.hour == 9 and now.minute >= 30) and not (9 < now.hour < 11) and not (now.hour == 11 and now.minute <= 30):
+        print("Outside trading window. Skipping run.")
+        return
 
     latest_price = fetch_latest_price(SYMBOL)
     if latest_price is None:
@@ -63,26 +69,20 @@ def main():
     vwap = calculate_vwap(df)
     ema9 = calculate_ema(df)
 
-    # Determine signals
-    signals = []
-    if latest_price > vwap:
-        signals.append("Above VWAP")
+    # Determine signal
+    if latest_price > vwap and latest_price > ema9:
+        signal = "Long"
+    elif latest_price < vwap and latest_price < ema9:
+        signal = "Short"
     else:
-        signals.append("Below VWAP")
-    if latest_price > ema9:
-        signals.append("Above 9EMA")
-    else:
-        signals.append("Below 9EMA")
+        signal = "Neutral"
 
-    # Convert timestamp to EST
-    est = pytz.timezone("US/Eastern")
-    timestamp = datetime.now(est).strftime("%Y-%m-%d %H:%M:%S")
-
-    # Compact Discord message
+    # Compose compact Discord message
+    timestamp = now.strftime("%Y-%m-%d %H:%M:%S EST")
     message = (
-        f"📊 {SYMBOL} {latest_price:.2f} ({timestamp})\n"
+        f"📊 {SYMBOL} {latest_price:.2f} | {timestamp}\n"
         f"VWAP: {vwap:.2f} | 9EMA: {ema9:.2f}\n"
-        f"🔔 {' | '.join(signals)}"
+        f"🔔 Signal: {signal}"
     )
 
     print(message)
