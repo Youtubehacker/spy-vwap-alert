@@ -1,26 +1,34 @@
 import os
 import requests
 from datetime import datetime
-import csv
 import pandas as pd
+from dotenv import load_dotenv
+import pytz
 
 # Load environment variables
-from dotenv import load_dotenv
 load_dotenv()
 
 API_KEY = os.getenv("ALPHAVANTAGE_KEY")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
-
 SYMBOL = "SPY"
 
+def fetch_latest_price(symbol):
+    """Fetch the most recent price using Alpha Vantage Global Quote."""
+    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={API_KEY}"
+    response = requests.get(url)
+    data = response.json()
+    if "Global Quote" not in data:
+        print("No price data returned from Alpha Vantage.")
+        return None
+    return float(data["Global Quote"]["05. price"])
+
 def fetch_intraday_data(symbol):
+    """Fetch intraday OHLCV data (5-min candles)."""
     url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval=5min&outputsize=compact&apikey={API_KEY}"
     response = requests.get(url)
     data = response.json()
-    
-    # Alpha Vantage may return an error if the key is invalid or limit exceeded
     if "Time Series (5min)" not in data:
-        print("No data returned from Alpha Vantage.")
+        print("No intraday data returned from Alpha Vantage.")
         return None
     df = pd.DataFrame.from_dict(data["Time Series (5min)"], orient="index", dtype=float)
     df = df.sort_index()
@@ -29,8 +37,7 @@ def fetch_intraday_data(symbol):
     return df
 
 def calculate_vwap(df):
-    vwap = (df["close"] * df["volume"]).sum() / df["volume"].sum()
-    return vwap
+    return (df["close"] * df["volume"]).sum() / df["volume"].sum()
 
 def calculate_ema(df, period=9):
     return df["close"].ewm(span=period, adjust=False).mean().iloc[-1]
@@ -38,58 +45,48 @@ def calculate_ema(df, period=9):
 def send_discord_alert(message):
     payload = {"content": message}
     try:
-        response = requests.post(DISCORD_WEBHOOK, json=payload)
-        if response.status_code == 204:
-            print("Discord alert sent successfully.")
-        else:
-            print(f"Failed to send Discord alert. Status code: {response.status_code}")
+        requests.post(DISCORD_WEBHOOK, json=payload)
     except Exception as e:
         print(f"Error sending Discord alert: {e}")
 
-def log_alert_csv(message):
-    file_path = "alerts_log.csv"
-    file_exists = os.path.isfile(file_path)
-
-    with open(file_path, mode="a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        if not file_exists:
-            writer.writerow(["Timestamp", "Message"])
-        writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message])
-
 def main():
-    print("Fetching intraday data...")
+    print("Fetching latest price and intraday data...")
+
+    latest_price = fetch_latest_price(SYMBOL)
+    if latest_price is None:
+        return
+
     df = fetch_intraday_data(SYMBOL)
     if df is None:
         return
 
-    latest_close = df["close"].iloc[-1]
     vwap = calculate_vwap(df)
     ema9 = calculate_ema(df)
 
-    print(f"Latest Close: {latest_close:.2f}, VWAP: {vwap:.2f}, 9EMA: {ema9:.2f}")
-
+    # Determine signals
     signals = []
-
-    # Long signals
-    if latest_close > vwap:
-        signals.append("Price reclaimed VWAP (Long)")
-    if latest_close > ema9:
-        signals.append("Price crossed above 9EMA (Long)")
-
-    # Short signals
-    if latest_close < vwap:
-        signals.append("Price dropped below VWAP (Short)")
-    if latest_close < ema9:
-        signals.append("Price crossed below 9EMA (Short)")
-
-    if signals:
-        message = f"📊 {SYMBOL} Alert ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})\n"
-        message += f"Price: {latest_close:.2f}\nVWAP: {vwap:.2f}\n9 EMA: {ema9:.2f}\n\n"
-        message += "🔔 Signals:\n- " + "\n- ".join(signals)
-        send_discord_alert(message)
-        log_alert_csv(message)
+    if latest_price > vwap:
+        signals.append("Above VWAP")
     else:
-        print("No signal this time.")
+        signals.append("Below VWAP")
+    if latest_price > ema9:
+        signals.append("Above 9EMA")
+    else:
+        signals.append("Below 9EMA")
+
+    # Convert timestamp to EST
+    est = pytz.timezone("US/Eastern")
+    timestamp = datetime.now(est).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Compact Discord message
+    message = (
+        f"📊 {SYMBOL} {latest_price:.2f} ({timestamp})\n"
+        f"VWAP: {vwap:.2f} | 9EMA: {ema9:.2f}\n"
+        f"🔔 {' | '.join(signals)}"
+    )
+
+    print(message)
+    send_discord_alert(message)
 
 if __name__ == "__main__":
     main()
